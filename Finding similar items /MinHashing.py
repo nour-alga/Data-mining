@@ -1,5 +1,5 @@
 import random
-
+from CompareSets import CompareSets
 class MinHashing:
     def __init__(self, num_hashes=100):
         self.num_hashes = num_hashes
@@ -24,3 +24,10 @@ class MinHashing:
                     min_hash_val = hash_val
             signature.append(min_hash_val)
         return signature
+    
+class Comparesignature : 
+    def __init__(self):
+         pass 
+    def CompareSignatures (vec1 , vec2 ):
+        assert len(vec1)== len(vec2)
+        return CompareSets().jaccard_similarity(vec1 , vec2)

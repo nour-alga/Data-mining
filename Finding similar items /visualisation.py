@@ -21,8 +21,8 @@ documents = [
     " ".join(doc1['sentence'].tolist()),  # combine all sentences into one string
     " ".join(doc2['sentence'].tolist())
 ]
-print ("document 1 " , documents[0])
-print("document 2 " , documents[1])
+#print ("document 1 " , documents[0])
+#print("document 2 " , documents[1])
 # Initialize objects
 sh = Shingling(k=k)
 mh = MinHashing(num_hashes=num_hashes)
