@@ -1,3 +1,12 @@
+"""from pyspark.sql import SparkSession
+from pyspark.sql.functions import udf
+from pyspark.sql.types import ArrayType, StringType
+
+# starting a spark session 
+spark = SparkSession.builder \
+    .appName("Shingling with PySpark") \
+    .getOrCreate() """
+
 class Shingling:
     def __init__(self, k):
         self.k = k
@@ -19,7 +28,7 @@ class Shingling:
         hashed_shingles = [hash(s) % 2**32 for s in self.shingles]  # modulo to limit the size 
         return hashed_shingles
 
-#try 
+"""#try 
 doc = "Hello Nour how are you i'm fine and you / whatever : let's try these caracteres "
 sh = Shingling(k=2)
 
@@ -32,3 +41,4 @@ print(sh.hashing())
 #sh.k = 7
 print(sh.create_shingles_char(doc))
 print(sh.hashing())
+"""
