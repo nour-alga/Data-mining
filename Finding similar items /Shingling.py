@@ -6,6 +6,7 @@ from pyspark.sql.types import ArrayType, StringType
 spark = SparkSession.builder \
     .appName("Shingling with PySpark") \
     .getOrCreate() """
+import random
 
 class Shingling:
     def __init__(self, k):
@@ -25,8 +26,10 @@ class Shingling:
 
     # Hashing shingles
     def hashing(self):
+        random.seed(42)  # Ensures deterministic behavior for hashing
         hashed_shingles = [hash(s) % 2**32 for s in self.shingles]  # modulo to limit the size 
         return hashed_shingles
+
 
 """#try 
 doc = "Hello Nour how are you i'm fine and you / whatever : let's try these caracteres "

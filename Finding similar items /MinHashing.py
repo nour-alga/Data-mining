@@ -1,5 +1,6 @@
 import random
 from CompareSets import CompareSets
+
 class MinHashing:
     def __init__(self, num_hashes=100):
         self.num_hashes = num_hashes
