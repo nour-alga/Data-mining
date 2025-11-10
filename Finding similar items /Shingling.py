@@ -1,11 +1,4 @@
-"""from pyspark.sql import SparkSession
-from pyspark.sql.functions import udf
-from pyspark.sql.types import ArrayType, StringType
 
-# starting a spark session 
-spark = SparkSession.builder \
-    .appName("Shingling with PySpark") \
-    .getOrCreate() """
 import random
 
 class Shingling:
