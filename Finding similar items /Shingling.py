@@ -12,6 +12,7 @@ class Shingling:
     def __init__(self, k):
         self.k = k
         self.shingles = []
+         
 
     # Character shingles
     def create_shingles_char(self, text):
@@ -26,7 +27,6 @@ class Shingling:
 
     # Hashing shingles
     def hashing(self):
-        random.seed(42)  # Ensures deterministic behavior for hashing
         hashed_shingles = [hash(s) % 2**32 for s in self.shingles]  # modulo to limit the size 
         return hashed_shingles
 

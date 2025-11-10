@@ -12,7 +12,7 @@ class LSH:
 
     def split_bandes(self, signature):
         n = len(signature)
-        rows = ceil(n / self.num_bandes)  # ceil is safer than integer division
+        rows = ceil(n / self.num_bandes)  # ceil here because it's  safer than integer division
         bandes = []
         for i in range(self.num_bandes):
             start = i * rows
