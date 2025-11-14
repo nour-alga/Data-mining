@@ -9,7 +9,7 @@ class MinHashing:
         # Generate random coefficients for hash functions
         random.seed(42)
         self.hash_funcs = [
-            (random.randint(1, self.prime - 1), random.randint(0, self.prime - 1))
+            (random.randint(1, self.prime - 1), random.randint(0, self.prime - 1)) #h(x) = (a*x +b )%c 
             for _ in range(num_hashes)
         ]
 

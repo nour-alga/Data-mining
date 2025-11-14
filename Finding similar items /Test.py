@@ -12,7 +12,7 @@ from LSH import LSH
 random.seed(42)
 
 # Loading data that's on the file archive(1) if you change the folder name change it here in the file path before runing the code please
-file_path = "../archive(1)/Articles.csv"
+file_path = "archive(1)/Articles.csv"
 df = pd.read_csv(file_path, encoding='latin1')
 
 # Limit to 1000 documents 
