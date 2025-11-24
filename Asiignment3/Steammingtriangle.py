@@ -5,332 +5,258 @@ from typing import Set, FrozenSet, Callable, DefaultDict
 from functools import reduce
 
 
-def _get_edge(line: str) -> FrozenSet[int]:
-    """
-    Parse a line from the file and extract an edge.
-    An edge is represented as a frozenset (immutable set) of two vertex IDs.
-    
-    Example: "5 10" becomes frozenset({5, 10})
-    
-    :param line: text line containing two vertex numbers
-    :return: frozenset containing the two vertices
-    """
-    # Split the line by whitespace and convert each part to an integer
-    # Then create a frozenset from those integers (frozenset is hashable, can be stored in sets)
-    return frozenset([int(vertex) for vertex in line.split()])
+def parse_edge_line(text: str) -> FrozenSet[int]:
+    #firstly we extract edge information from our data 
+    # Parse text, split by spaces, convert to integers, return as frozenset
+    vertices = [int(v) for v in text.split()]
+    return frozenset(vertices)
 
 
-class Triest:
-    """
-    Blueprint for triest triangle estimation method.
-    Base class containing shared functionality.
-    """
-
-    def __init__(self, file: str, M: int, verbose: bool = True):
-        """
-        This function initializes the class with all counters set to zero. Moreover, it initializes the file path
-        to file and the memory size to M.
-
-        :param file: the path to the file to be read
-        :param M: the size of the memory for the algorithm (max edges we can keep)
-        :param verbose: if true, prints information on screen
-        """
-        # Store the path to the file containing the edge stream
-        self.file: str = file
-        
-        # M: Maximum number of edges we can store in memory (our sample size)
-        self.M: int = M
-        
-        # Flag to control printing progress messages
-        self.verbose = verbose
-        
-        # S: The set of sampled edges (our "bucket" or reservoir)
-        # Each edge is a frozenset of two vertex IDs
-        self.S: Set[FrozenSet[int]] = set()
-        
-        # t: Counter for total number of edges seen in the stream so far
-        self.t: int = 0
-        
-        # tau_vertices: Dictionary tracking number of triangles each vertex participates in
-        # defaultdict means accessing a non-existent key returns 0 automatically
-        self.tau_vertices: DefaultDict[int, int] = defaultdict(int)
-        
-        # tau: Total count of triangles found in our sample S
-        self.tau: int = 0
+class TriangleCounter:
+   #the base implemantation of our algorithme 
+   
+    def __init__(self, filepath: str, memory_size: int, print_logs: bool = True):
+         # we initialise our variables 
+        # File location for reading edges
+        self.filepath: str = filepath
+        # Maximum capacity of our edge reservoir
+        self.memory_size: int = memory_size
+        # Control flag for console output
+        self.print_logs: bool = print_logs
+        # Edge reservoir  stores our sampled edges
+        self.edge_reservoir: Set[FrozenSet[int]] = set()
+        # Total edges processed from stream
+        self.edges_processed: int = 0
+        # Per-vertex triangle counts
+        self.vertex_triangle_counts: DefaultDict[int, int] = defaultdict(int)
+        # Total triangle count in our sample
+        self.sample_triangle_count: int = 0
 
     @property
-    def xi(self) -> float:
+    def scaling_factor(self) -> float:
         """
-        Calculate the scaling factor xi (ξ) to estimate total triangles from sample.
+        Compute scaling factor for extrapolating from sample to full graph.
         
-        This is a property, so we can access it like: self.xi (no parentheses needed)
-        
-        Formula: max(1, (t choose 3) / (M choose 3))
-        = max(1, [t(t-1)(t-2)] / [M(M-1)(M-2)])
-        
-        :return: the scaling/correction factor
+        Formula: max(1, C(edges_processed, 3) / C(memory_size, 3))
+        where C(n, k) is binomial coefficient "n choose k"
+        :return: multiplication factor for final estimate
         """
-        # Return the maximum of 1.0 or the ratio of binomial coefficients
-        # This ratio tells us how much to scale up our sample count
-        return max(
-            1.0,  # Never scale down below 1
-            (self.t * (self.t - 1) * (self.t - 2)) /  # Ways to choose 3 from t edges
-            (self.M * (self.M - 1) * (self.M - 2))    # Ways to choose 3 from M edges
-        )
+        # Calculate binomial coefficient ratio
+        n = self.edges_processed
+        m = self.memory_size
+        # then we return the max to ensure we never scale down
+        return max(1.0, (n * (n - 1) * (n - 2)) / (m * (m - 1) * (m - 2)))
 
-    def _sample_edge(self, t: int) -> bool:
-        """
-        This function determines if the new edge can be inserted in memory. If yes and if the memory if full,
-        the function proceeds to remove a random edge from the memory to make space.
-        
-        This implements reservoir sampling to maintain a uniform random sample.
-
-        :param t: the number of observed samples in the stream (current edge number)
-        :return: true if the new edge can be inserted in the memory, false otherwise
-        """
-        # CASE 1: Memory not full yet (t <= M)
-        # Always keep the edge when we haven't reached memory limit
-        if t <= self.M:
+    def should_add_to_reservoir(self, position: int) -> bool:
+        # we fill reservoir with first memory_size edges
+        if position <= self.memory_size:
             return True
         
-        # CASE 2: Memory is full (t > M)
-        # Use probabilistic sampling: keep with probability M/t
-        elif bernoulli.rvs(p=self.M / t):  # Flip a weighted coin with probability M/t
-            # Coin said YES - we want to keep this edge
-            # But memory is full, so we must evict a random edge first
+        #  Probabilistic replacement with probability memory_size/position
+        elif bernoulli.rvs(p=self.memory_size / position):
+            # Select random edge for eviction
+            evicted_edge: FrozenSet[int] = random.choice(list(self.edge_reservoir))
+            self.edge_reservoir.remove(evicted_edge)
+            self.modify_triangle_counts(lambda current, delta: current - delta, evicted_edge)
             
-            # Convert our set S to a list and randomly choose one edge to remove
-            edge_to_remove: FrozenSet[int] = random.choice(list(self.S))
-            
-            # Remove the chosen edge from our sample
-            self.S.remove(edge_to_remove)
-            
-            # Update counters: subtract any triangles that involved the removed edge
-            # lambda x, y: x - y is a function that subtracts y from x
-            self._update_counters(lambda x, y: x - y, edge_to_remove)
-            
-            # Return True because we made space for the new edge
             return True
         else:
-            # Coin said NO - skip this edge, don't add it to sample
+            # Skip this edge
             return False
 
-    def _update_counters(self, operator: Callable[[int, int], int], edge: FrozenSet[int]) -> None:
-        """
-        This function updates the counters related to estimating the number of triangles. The update happens through
-        the operator lambda and involves the edge and its neighbours.
+    def modify_triangle_counts(self, operation: Callable[[int, int], int], edge: FrozenSet[int]) -> None:
+        # Build neighbor lists for each endpoint
+        endpoint_neighbors = []
+        for endpoint in edge:
+            # Find all neighbors of this endpoint in reservoir
+            neighbors = set()
+            for existing_edge in self.edge_reservoir:
+                if endpoint in existing_edge:
+                    # Add the other vertex from this edge
+                    for vertex in existing_edge:
+                        if vertex != endpoint:
+                            neighbors.add(vertex)
+            endpoint_neighbors.append(neighbors)
         
-        A triangle is formed when edge connects two vertices that share a common neighbor.
-
-        :param operator: the lambda used to update the counters (either add or subtract)
-        :param edge: the edge interested in the update
-        :return: nothing
-        """
-        # STEP 1: Find the common neighborhood of the edge's two vertices
-        # Common neighborhood = vertices connected to BOTH endpoints of this edge
+        # just for safety check: need exactly 2 endpoints
+        if len(endpoint_neighbors) < 2:
+            return
         
-        # Build list of neighbor sets for each vertex in the edge
-        neighbor_sets = [
-            # For each vertex in the edge, build its set of neighbors
-            {
-                node  # Include this node in the neighbor set
-                for link in self.S if vertex in link  # For each edge in S that contains vertex
-                for node in link if node != vertex     # Get the other endpoint(s)
-            }
-            for vertex in edge  # Do this for both vertices in the edge
-        ]
-        
-        # IMPORTANT FIX: Check if we have neighbor sets before using reduce
-        # If the list is empty or has only one set, we can't find common neighbors
-        if len(neighbor_sets) < 2:
-            return  # No triangles possible, exit early
-        
-        # Now safely use reduce to find intersection of all neighbor sets
-        common_neighbourhood: Set[int] = reduce(
-            # reduce applies a function cumulatively: combines results with & (intersection)
-            lambda a, b: a & b,  # Set intersection operator
-            neighbor_sets
+        # Find common neighbors (vertices connected to both endpoints)
+        shared_neighbors: Set[int] = reduce(
+            lambda set1, set2: set1 & set2,
+            endpoint_neighbors
         )
-        # After reduce, common_neighbourhood contains vertices connected to BOTH edge endpoints
 
-        # STEP 2: For each common neighbor, we found a triangle!
-        # Triangle is: edge's two vertices + the common neighbor
-        for vertex in common_neighbourhood:
-            # Update the global triangle counter using the operator
-            # operator is either (x + y) for adding, or (x - y) for removing
-            self.tau = operator(self.tau, 1)
+        # here we update counters for each triangle found
+        for shared_vertex in shared_neighbors:
+            # global triangle count
+            self.sample_triangle_count = operation(self.sample_triangle_count, 1)
             
-            # Increment/decrement triangle count for this common neighbor vertex
-            self.tau_vertices[vertex] = operator(self.tau_vertices[vertex], 1)
+            #count for our  shared vertex
+            self.vertex_triangle_counts[shared_vertex] = operation(
+                self.vertex_triangle_counts[shared_vertex], 1
+            )
 
-            # Increment/decrement triangle count for both vertices in the edge
-            for node in edge:
-                self.tau_vertices[node] = operator(self.tau_vertices[node], 1)
+            #  counts for both edge endpoints
+            for endpoint in edge:
+                self.vertex_triangle_counts[endpoint] = operation(
+                    self.vertex_triangle_counts[endpoint], 1
+                )
 
 
-class TriestBase(Triest):
+class BaseTriestAlgorithm(TriangleCounter):
     """
-    This class implements the algorithm Triest base presented in the paper
-
-    'L. De Stefani, A. Epasto, M. Riondato, and E. Upfal, TRIÈST: Counting Local and Global Triangles in Fully-Dynamic
-    Streams with Fixed Memory Size, KDD'16.'
-
-    The algorithm provides an estimate of the number of triangles in a graph in a streaming environment,
-    where the stream represent a series of edges.
+    TRIÈST-BASE algorithm implementation.
+    
+    Reference: De Stefani et al., "TRIÈST: Counting Local and Global Triangles 
+    in Fully-Dynamic Streams with Fixed Memory Size", KDD 2016
+    
+    Estimates global triangle count by scaling sample count at the end.
     """
 
-    def run(self) -> float:
-        """
-        Runs the algorithm from the stream on the file.
+    def execute(self) -> float:
         
-        Process: Read edges line-by-line, sample them, update triangle counts,
-        and return the final estimate.
+       # Run the BASE algorithm on the edge stream and retur estimated number of triangles in full graph
 
-        :return: the estimated number of triangles
-        """
+        if self.print_logs:
+            print(f"Executing TRIÈST-BASE with memory_size = {self.memory_size}")
 
-        # Print starting message if verbose mode enabled
-        if self.verbose:
-            print("Running the algorithm with M = {}.".format(self.M))
+        with open(self.filepath, 'r') as file_stream:
+            if self.print_logs:
+                print("Stream processing started...")
 
-        # Open the file containing the edge stream
-        with open(self.file, 'r') as f:
-            if self.verbose:
-                print("File opened, processing the stream...")
-
-            # Process each line in the file (each line is one edge)
-            for line in f:
-                # Parse the line to extract the edge as a frozenset
-                edge = _get_edge(line)
+            for line in file_stream:
+                # Parse current edge
+                current_edge = parse_edge_line(line)
                 
-                # Increment the counter of total edges seen
-                self.t += 1
+                # Increment stream position
+                self.edges_processed += 1
 
-                # Print progress every 1000 edges
-                if self.verbose and self.t % 1000 == 0:
-                    print("Currently sampling element {} in the stream.".format(self.t))
+                # Progress update
+                if self.print_logs and self.edges_processed % 1000 == 0:
+                    print(f"Processing edge {self.edges_processed}...")
 
-                # Decide whether to add this edge to our sample
-                if self._sample_edge(self.t):
-                    # CRITICAL: Update counters BEFORE adding edge to S
-                    # This way we find triangles with edges already in S
-                    # lambda x, y: x + y means we're adding (incrementing)
-                    self._update_counters(lambda x, y: x + y, edge)
+                # Reservoir sampling decision
+                if self.should_add_to_reservoir(self.edges_processed):
+                    # Update counts BEFORE adding to reservoir
+                    self.modify_triangle_counts(lambda x, y: x + y, current_edge)
                     
-                    # NOW add the edge to our sample set S
-                    self.S.add(edge)
+                    # Add to reservoir
+                    self.edge_reservoir.add(current_edge)
 
-                # Print current estimate every 1000 edges
-                if self.verbose and self.t % 1000 == 0:
-                    print("The current estimate for the number of triangles is {}.".format(
-                        self.xi * self.tau)  # Estimate = scaling_factor × sample_count
-                    )
+                # Periodic estimate display
+                if self.print_logs and self.edges_processed % 1000 == 0:
+                    current_estimate = self.scaling_factor * self.sample_triangle_count
+                    print(f"Current triangle estimate: {current_estimate}")
 
-            # Return the final estimate: xi (scaling factor) × tau (triangles in sample)
-            return self.xi * self.tau
-class TriestImproved(Triest):
+            # Final result: scale sample count
+            return self.scaling_factor * self.sample_triangle_count
+
+
+class ImprovedTriestAlgorithm(TriangleCounter):
     """
-        This class implements the algorithm Triest improved presented in the paper
-
-        'L. De Stefani, A. Epasto, M. Riondato, and E. Upfal, TRIÈST: Counting Local and Global Triangles in Fully-Dynamic
-        Streams with Fixed Memory Size, KDD'16.'
-
-        The algorithm provides an estimate of the number of triangles in a graph in a streaming environment,
-        where the stream represent a series of edges.
+    TRIÈST-IMPR (Improved) algorithm implementation from second paper 
+    
+    Reference: De Stefani et al., "TRIÈST: Counting Local and Global Triangles 
+    in Fully-Dynamic Streams with Fixed Memory Size", KDD 2016
+    Provides better variance by updating with scaling factor incrementally.
     """
 
     @property
-    def eta(self) -> float:
-        return max(
-            1.0,
-            ((self.t - 1) * (self.t - 2)) / (self.M * (self.M - 1))
-        )
+    def incremental_scale(self) -> float:
+        n = self.edges_processed - 1
+        m = self.memory_size
+        return max(1.0, (n * (n - 1)) / (m * (m - 1)))
 
-    def _update_counters(self, operator: Callable[[int, int], int], edge: FrozenSet[int]) -> None:
+    def modify_triangle_counts(self, operation: Callable[[int, int], int], edge: FrozenSet[int]) -> None:
         """
-        This function updates the counters related to estimating the number of triangles. The update happens through
-        the operator lambda and involves the edge and its neighbours.
-
-        :param operator: the lambda used to update the counters
-        :param edge: the edge interested in the update
-        :return: nothing
-        """
-        common_neighbourhood: Set[int] = reduce(
+        Update triangle counts with incremental scaling.
+        Adds eta instead of 1 for each triangle. """
+        # Build neighbor sets
+        endpoint_neighbors = []
+        for endpoint in edge:
+            neighbors = {
+                vertex
+                for existing_edge in self.edge_reservoir if endpoint in existing_edge
+                for vertex in existing_edge if vertex != endpoint
+            }
+            endpoint_neighbors.append(neighbors)
+        
+        if len(endpoint_neighbors) < 2:
+            return
+        
+        # Find shared neighbors
+        shared_neighbors: Set[int] = reduce(
             lambda a, b: a & b,
-            [
-                {
-                    node
-                    for link in self.S if vertex in link
-                    for node in link if node != vertex
-                }
-                for vertex in edge
-            ]
+            endpoint_neighbors
         )
 
-        for vertex in common_neighbourhood:
-            self.tau += self.eta
-            self.tau_vertices[vertex] += self.eta
+        # Update with incremental scale
+        for shared_vertex in shared_neighbors:
+            self.sample_triangle_count += self.incremental_scale
+            self.vertex_triangle_counts[shared_vertex] += self.incremental_scale
 
-            for node in edge:
-                self.tau_vertices[node] += self.eta
+            for endpoint in edge:
+                self.vertex_triangle_counts[endpoint] += self.incremental_scale
 
-    def _sample_edge(self, t: int) -> bool:
-        """
-        This function determines if the new edge can be inserted in memory. If yes and if the memory if full,
-        the function proceeds to remove a random edge from the memory to make space.
+    def should_add_to_reservoir(self, position: int) -> bool:
 
-        :param edge: the current sample under consideration
-        :param t: the number of observed samples in the stream
-        :return: true if the new edge can be inserted in the memory, false otherwise
-        """
-
-        if t <= self.M:
+        if position <= self.memory_size:
             return True
-        elif bernoulli.rvs(p=self.M / t):
-            edge_to_remove: FrozenSet[int] = random.choice(list(self.S))
-            self.S.remove(edge_to_remove)
+        elif bernoulli.rvs(p=self.memory_size / position):
+            # Evict random edge without counter update
+            evicted = random.choice(list(self.edge_reservoir))
+            self.edge_reservoir.remove(evicted)
             return True
         else:
             return False
 
-    def run(self) -> float:
+    def execute(self) -> float:
         """
-        Runs the algorithm from the stream on the file.
-
-        :return: the estimated number of triangles
+        Run the IMPROVED algorithm on edge stream.
+        
+        :return: estimated triangle count (already scaled)
         """
 
-        if self.verbose:
-            print("Running the algorithm with M = {}.".format(self.M))
+        if self.print_logs:
+            print(f"Executing TRIÈST-IMPR with memory_size = {self.memory_size}")
 
-        with open(self.file, 'r') as f:
-            if self.verbose:
-                print("File opened, processing the stream...")
+        with open(self.filepath, 'r') as file_stream:
+            if self.print_logs:
+                print("Stream processing started...")
 
-            for line in f:
-                edge = _get_edge(line)
-                self.t += 1
+            for line in file_stream:
+                current_edge = parse_edge_line(line)
+                self.edges_processed += 1
 
-                if self.verbose and self.t % 1000 == 0:
-                    print("Currently sampling element {} in the stream.".format(self.t))
+                if self.print_logs and self.edges_processed % 1000 == 0:
+                    print(f"Processing edge {self.edges_processed}...")
 
-                self._update_counters(lambda x, y: x + y, edge)
+                # Update BEFORE sampling decision
+                self.modify_triangle_counts(lambda x, y: x + y, current_edge)
 
-                if self._sample_edge(self.t):
-                    self.S.add(edge)
+                # Then decide on sampling
+                if self.should_add_to_reservoir(self.edges_processed):
+                    self.edge_reservoir.add(current_edge)
 
-                if self.verbose and self.t % 1000 == 0:
-                    print(
-                        "The current estimate for the number of triangles is {}.".format(self.tau)
-                    )
+                if self.print_logs and self.edges_processed % 1000 == 0:
+                    print(f"Current triangle estimate: {self.sample_triangle_count}")
 
-            return self.tau
-
+            # Return already-scaled count
+            return self.sample_triangle_count
 
 
+# Entry point
 if __name__ == "__main__":
-    TriestImproved(
-        file='web-Google.txt',
-        M=1000,
-        verbose=True
-    ).run()
+    # Run improved variant
+    estimator = ImprovedTriestAlgorithm(
+        filepath='facebook_combined.txt',
+        memory_size=1000,
+        print_logs=True
+    )
+    
+    result = estimator.execute()
+    print(f"\n{'='*60}")
+    print(f"FINAL ESTIMATE: {result:.0f} triangles")
+    print(f"{'='*60}")
