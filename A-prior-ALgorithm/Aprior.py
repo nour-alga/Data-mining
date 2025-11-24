@@ -9,7 +9,7 @@ class Apriori:
     
     def pass1(self):
         """
-        First pass: count all unique items and keep those with support >= threshold
+        First pass: we  count all unique items and keep those with support >= threshold
         """
         item_count = defaultdict(int)
         for basket in self.transactions:
@@ -17,13 +17,13 @@ class Apriori:
                 item_count[item] += 1
         
         frequent_items = [(item,) for item, count in item_count.items() if count >= self.support]
-        self.L[1] = {item: item_count[item[0]] for item in frequent_items}
+        self.L[1] = {item: item_count[item[0]] for item in frequent_items} #we stock them for later to have all the frequent items in each pass 
         return frequent_items
     
     def generate_candidates(self, prev_frequent, k):
         """
         Generate candidate k-itemsets from frequent (k-1)-itemsets
-        Uses join method from MMDS book: first k-2 elements must be identical
+        
         """
         candidates = set()
         prev_frequent_sorted = sorted([tuple(sorted(x)) for x in prev_frequent])
@@ -36,7 +36,7 @@ class Apriori:
                 itemset1 = prev_frequent_sorted[i]
                 itemset2 = prev_frequent_sorted[j]
                 
-                # Join condition: first k-2 elements must be the same
+                # here we satistfy the condition where  first k-2 elements must be the same
                 if itemset1[:-1] == itemset2[:-1]:
                     candidate = tuple(sorted(set(itemset1) | set(itemset2)))
                     
@@ -48,7 +48,7 @@ class Apriori:
     
     def passk(self, prev_frequent, k):
         """
-        Pass k of A-Priori algorithm:
+        Pass k of A-Priori algorithm we generalise the algorithme of pass 1 :
         1. Generate candidates Ck from L(k-1)
         2. Count support of each candidate
         3. Filter Ck -> Lk (keep only support >= threshold)
@@ -64,12 +64,12 @@ class Apriori:
         candidates_set = set(candidates)
         k_count = defaultdict(int)
         
-        # Optimization: extract all frequent items from L(k-1)
+        # extract all frequent items from L(k-1)
         frequent_items = set()
         for itemset in prev_frequent:
             frequent_items.update(itemset)
         
-        # Count support of each candidate in transactions
+        # Count support of each candidate in baskets of transactions (data)
         for basket in self.transactions:
             basket_items = [item for item in basket if item in frequent_items]
             
@@ -81,7 +81,7 @@ class Apriori:
                 if subset in candidates_set:
                     k_count[subset] += 1
         
-        # Filter Ck -> Lk (keep only support >= threshold)
+        #  finally wwe filter Ck -> Lk (keep only support >= threshold)
         frequent_k_items = [itemset for itemset, count in k_count.items() if count >= self.support]
         self.L[k] = {itemset: k_count[itemset] for itemset in frequent_k_items}
         
@@ -89,20 +89,17 @@ class Apriori:
     
     def run(self, max_k=None):
         """
-        Execute complete A-Priori algorithm
-        Returns all frequent itemsets found: L = {1: {...}, 2: {...}, 3: {...}, ...}
-        IMPORTANT: Association rules are generated ONLY ONCE at the end
-        using ALL frequent itemsets from all passes combined!
+        now we ran our algorithme until there is no frequent itemset left 
         """
         print(f"Running A-Priori with support threshold = {self.support}")
         
-        print("Pass 1: Finding frequent 1-itemsets...")
+        print("Pass 1: Finding frequent 1-itemsets")
         L_prev = self.pass1()
         print(f"  Found {len(L_prev)} frequent 1-itemsets")
         
         k = 2
         while L_prev and (max_k is None or k <= max_k):
-            print(f"Pass {k}: Finding frequent {k}-itemsets...")
+            print(f"Pass {k}: Finding frequent {k}-itemsets")
             L_k = self.passk(L_prev, k)
             
             if not L_k:
@@ -130,12 +127,6 @@ class AssociationRulesGenerator:
         """
         Generate all association rules with confidence >= c
         
-        IMPORTANT: Rules are generated ONLY ONCE at the end, using ALL
-        frequent itemsets from ALL passes (L1, L2, L3, ...)
-        
-        Rule format: X => Y where confidence = support(X ∪ Y) / support(X)
-        
-        Returns: {antecedent: Set[consequent]}
         """
         # Combine all itemsets from all passes into a single dictionary
         all_itemsets = {}
@@ -168,7 +159,7 @@ class AssociationRulesGenerator:
 
 # ===== COMPLETE TEST =====
 if __name__ == "__main__":
-    # Read transactions from file
+    # Read baskets from file and stock it in transaction 
     print("=" * 70)
     print("READING FILE")
     print("=" * 70)
