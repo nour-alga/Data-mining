@@ -156,24 +156,25 @@ class BaseTriestAlgorithm(TriangleCounter):
 
 class ImprovedTriestAlgorithm(TriangleCounter):
     """
-    TRIÈST-IMPR (Improved) algorithm implementation from second paper 
-    
-    Reference: De Stefani et al., "TRIÈST: Counting Local and Global Triangles 
-    in Fully-Dynamic Streams with Fixed Memory Size", KDD 2016
-    Provides better variance by updating with scaling factor incrementally.
+    TRIÈST-IMPR (Improved) algorithm implementation.
+    Estimates global and local triangle counts in a streaming graph
+    with fixed memory and reduced variance using weighted updates.
     """
 
     @property
     def incremental_scale(self) -> float:
-        n = self.edges_processed - 1
-        m = self.memory_size
-        return max(1.0, (n * (n - 1)) / (m * (m - 1)))
+        # Compute eta(t): scaling factor for triangles to ensure unbiased count
+        # M(M−1) -> number of ways the first 2 edges of a triangle could be in the sample of size M. (t−1)(t−2) -> total ways the first 2 edges appeared in the stream.
+        n = self.edges_processed - 1  # number of edges seen before current
+        m = self.memory_size          # reservoir size
+        return max(1.0, (n * (n - 1)) / (m * (m - 1)))  # scale ≥ 1
 
     def modify_triangle_counts(self, operation: Callable[[int, int], int], edge: FrozenSet[int]) -> None:
         """
-        Update triangle counts with incremental scaling.
-        Adds eta instead of 1 for each triangle. """
-        # Build neighbor sets
+        Update triangle counts for the current edge using eta(t) scaling.
+        Always called before sampling decision.
+        """
+        # Build neighbor sets from current edge reservoir
         endpoint_neighbors = []
         for endpoint in edge:
             neighbors = {
@@ -184,41 +185,42 @@ class ImprovedTriestAlgorithm(TriangleCounter):
             endpoint_neighbors.append(neighbors)
         
         if len(endpoint_neighbors) < 2:
-            return
+            return  # Not enough neighbors to form a triangle
         
-        # Find shared neighbors
+        # Find shared neighbors → vertices completing triangles with this edge
         shared_neighbors: Set[int] = reduce(
             lambda a, b: a & b,
             endpoint_neighbors
         )
 
-        # Update with incremental scale
+        # Increment global and local triangle counters with scale
         for shared_vertex in shared_neighbors:
-            self.sample_triangle_count += self.incremental_scale
-            self.vertex_triangle_counts[shared_vertex] += self.incremental_scale
+            self.sample_triangle_count += self.incremental_scale  # global count
+            self.vertex_triangle_counts[shared_vertex] += self.incremental_scale  # local count
 
             for endpoint in edge:
-                self.vertex_triangle_counts[endpoint] += self.incremental_scale
+                self.vertex_triangle_counts[endpoint] += self.incremental_scale  # endpoints local count
 
     def should_add_to_reservoir(self, position: int) -> bool:
-
+        """
+        Decide whether to include the current edge in the reservoir.
+        Implements standard reservoir sampling: probability = M / t
+        """
         if position <= self.memory_size:
             return True
         elif bernoulli.rvs(p=self.memory_size / position):
-            # Evict random edge without counter update
+            # Reservoir full: evict random edge to maintain size
             evicted = random.choice(list(self.edge_reservoir))
             self.edge_reservoir.remove(evicted)
             return True
         else:
-            return False
+            return False  # Do not add this edge
 
     def execute(self) -> float:
         """
-        Run the IMPROVED algorithm on edge stream.
-        
-        :return: estimated triangle count (already scaled)
+        Run TRIÈST-IMPR on the edge stream.
+        Returns the global triangle estimate (already scaled by eta).
         """
-
         if self.print_logs:
             print(f"Executing TRIÈST-IMPR with memory_size = {self.memory_size}")
 
@@ -230,21 +232,24 @@ class ImprovedTriestAlgorithm(TriangleCounter):
                 current_edge = parse_edge_line(line)
                 self.edges_processed += 1
 
+                # Log progress every 1000 edges
                 if self.print_logs and self.edges_processed % 1000 == 0:
                     print(f"Processing edge {self.edges_processed}...")
 
-                # Update BEFORE sampling decision
+                # Update counters BEFORE deciding to sample
                 self.modify_triangle_counts(lambda x, y: x + y, current_edge)
 
-                # Then decide on sampling
+                # Reservoir sampling decision
                 if self.should_add_to_reservoir(self.edges_processed):
                     self.edge_reservoir.add(current_edge)
 
+                # Log current triangle estimate
                 if self.print_logs and self.edges_processed % 1000 == 0:
                     print(f"Current triangle estimate: {self.sample_triangle_count}")
 
-            # Return already-scaled count
+            # Return final estimate
             return self.sample_triangle_count
+
 
 
 # Entry point
@@ -252,7 +257,7 @@ if __name__ == "__main__":
     # Run improved variant
     estimator = ImprovedTriestAlgorithm(
         filepath='facebook_combined.txt',
-        memory_size=1000,
+        memory_size=100000,
         print_logs=True
     )
     
